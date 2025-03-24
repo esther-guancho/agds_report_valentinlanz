@@ -1,0 +1,151 @@
+---
+title: "agds_report_chapter_5"
+output: html_document
+date: "2025-03-10"
+---
+
+  
+**Description of the airquality dataset**  
+The airquality dataset is a built-in dataset in R that shows the air quality in New York measured daily from May to September 1973. The data sources are the New York State Department of Conservation and the National Weather Service. The dataset features the following variables:
+
+[,1]	Ozone  
+[,2]	Solar.R  
+[,3]	Wind   
+[,4]	Temp  
+[,5]	Month  
+[,6]	Day   
+
+
+Ozone: Mean ozone in parts per billion from 1300 to 1500 hours at Roosevelt Island
+
+Solar.R: Solar radiation in Langleys in the frequency band 4000–7700 Angstroms from 0800 to 1200 hours at Central Park
+
+Wind: Average wind speed in miles per hour at 0700 and 1000 hours at LaGuardia Airport
+
+Temp: Maximum daily temperature in degrees Fahrenheit at La Guardia Airport.
+
+Month: Numeric value indicating the month of measurement. Ranges from 1 to 12.
+
+Day: Numeric value indicating the day of measurement. Ranges from 1 to 31.
+
+  
+**Research question**  
+I want to investigate how ozone concentration is influenced by the variables wind, solar radiation and temperature.  
+To get an idea of the data set, i will first plot the ozone concentration value of each day.
+
+
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+library(readr)
+library(lubridate)
+library(dplyr)
+library(tidyverse)
+
+airquality <- datasets::airquality
+
+#add a column with the measurement date
+airquality <- airquality |> dplyr::mutate(
+   measurement_date = ymd(paste(1973, Month, Day)))
+
+#plot ozone concentration over time
+ggplot(data = airquality, aes(x = measurement_date, y = Ozone)) +
+  geom_line() +
+  labs(title = "Ozone concentration, New York 1973", 
+       subtitle = "Site: Roosevelt Island",
+       x = "Date of measurement",
+       y = "Ozone concentration [ppb]")
+
+```
+
+As we see, there are values missing for certain days, which causes gaps in the graph.
+We also notice that the ozone concentration is quite inconsistent and varies strongly from day to day inside a rather wide range. To estimate the range, I want to find the minimum and the maximum value.
+In order to calculate the mean ozone concentration, we have to remove the rows with missing values. 
+
+```{r message=FALSE, warning=FALSE, fig.align="center", echo = FALSE,fig.width = 5}
+
+#remove rows that contain NA
+airquality_clean <- airquality |> drop_na()
+
+#calculate mean, max and min
+mean_oz <- airquality_clean[,1] |> mean()
+min_oz <- min(airquality_clean[,1])
+max_oz <- max(airquality_clean[,1])
+
+#create a data frame with the results
+df_ozone <- data.frame(
+  mean_ozone = mean_oz,
+  min_ozone = min_oz,
+  max_ozone = max_oz
+)
+
+#display restults
+knitr::kable(df_ozone)
+
+```
+
+
+Next, I want to find out if and how the ozone concentration is influenced by solar radiation, wind and temperature. To do this, we can calculate the correlation coefficient (Pearson) using the cor() function.
+
+
+```{r message=FALSE, warning=FALSE}
+#search for correlation between ozone and other variables
+pearson_solar <- cor(airquality_clean$Ozone, airquality_clean$Solar.R)
+pearson_wind <- cor(airquality_clean$Ozone, airquality_clean$Wind)
+pearson_temp <- cor(airquality_clean$Ozone, airquality_clean$Temp)
+
+
+#create a data frame with the results
+df_cors <- data.frame(
+  r_oz_solar = pearson_solar,
+  r_oz_wind = pearson_wind,
+  r_oz_temp = pearson_temp
+)
+
+#display restults
+knitr::kable(df_cors)
+
+```
+
+The correlation coefficient between temperature and ozone concentration is almost 0.7, which means that there is a fairly strong correlation between these two variables.
+Wind also has a significant influence on ozone concentration, with more wind leading to less ozone (negative correlation). Meanwhile, solar Radiation only weakly correlates with ozone concentration (Pearson 0.35)
+To illustrate this, let us look at the scatter plots and their regression lines:
+```{r message=FALSE, warning=FALSE}
+
+#plot ozone against solar radiation
+oz_sol <- ggplot(data = airquality, aes(x = Solar.R, y = Ozone)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "Ozone vs. Solar radiation",
+       x = "Solar radiation [lan]",
+       y = "Ozone [ppb]")
+
+#plot ozone vs. temperature
+oz_temp <- ggplot(data = airquality, aes(x = Temp, y = Ozone)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "Ozone vs. Temperature", 
+       x = "Temperature [F]",
+       y = "Ozone [ppb]")
+
+#plot ozone vs. wind
+oz_wind <- ggplot(data = airquality, aes(x = Wind, y = Ozone)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "Ozone vs. Wind",
+       x = "Wind speed [mph]",
+       y = "Ozone [ppb]")
+
+#combine all plots and display them together
+cowplot::plot_grid(oz_sol, oz_temp, oz_wind)
+
+```
+  
+In the plot above, we see clearly that solar radiation has the weakest correlation with ozone concentration. To me, this comes as a surprise. I would have expected a stronger and (and negative) correlation, given that ozone absorbs UV-radiation. So I would have expected that a high concentration of ozone leads to less incoming solar radiation.
+A reason for this not being the case might be that the ozone data was not measured in the stratosphere (where the ozone layer is located) but rather in the same height as temperature and wind (a few meters above the ground on Roosevelt Island).
+
+
+
+
+```{r}
+
+```
