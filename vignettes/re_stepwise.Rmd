@@ -1,0 +1,262 @@
+---
+title: "re_stepwise"
+author: "Valentin Lanz"
+output: html_document
+date: "2025-04-07"
+---
+In this exercise, I am going to try to develop a stepwise regression algorithm.
+
+```{r warning=FALSE, message=FALSE}
+
+library(dplyr)
+library(ggplot2)
+
+
+#read data
+url_fluxes <- "https://raw.githubusercontent.com/geco-bern/agds_book/refs/heads/main/book/data/df_for_stepwise_regression.csv"
+
+half_hourly_fluxes <- read.table(
+  url_fluxes,
+  header = TRUE,
+  sep = ","
+)
+
+
+```
+
+
+## Single predictor models
+
+```{r warning=FALSE}
+
+# numerical variables only, remove NA
+clean_fluxes <- half_hourly_fluxes |>
+  dplyr::select(-starts_with("TIMESTAMP",), -"siteid") |>
+  tidyr::drop_na()
+
+
+#create data frame for results of the bivariate model analysis
+bivar_results = data.frame(predictor = character(), R2 = numeric(), AIC = numeric())
+
+
+#vector containing names of possible predictor variables
+predictor_vars <- colnames(clean_fluxes)
+predictor_vars <- predictor_vars[predictor_vars != "GPP_NT_VUT_REF"]
+
+
+#create all bivariate models using GPP and a different predictor variable in every iteration
+for (pred_var in predictor_vars) {
+  
+  linear_model <- lm(as.formula(paste("GPP_NT_VUT_REF ~ ", pred_var)), data = clean_fluxes)
+  
+  current_R2 <- (summary(linear_model)$r.squared)  #calculate R^2 of the model
+  current_AIC <- extractAIC(linear_model)[2]      #calculate AIC of the model
+  
+  
+  #add row with predictor name, R2 and AIC to the results dataframe
+  bivar_results <- rbind(bivar_results, data.frame(predictor = pred_var, R2 = current_R2,
+                                             AIC = current_AIC))
+  
+}
+
+
+#sort results, highest R2 first
+bivar_results_sorted <- bivar_results |> dplyr::arrange(desc(R2))
+
+knitr::kable(bivar_results_sorted, align = "c")
+```
+
+The above table shows the best predictors in descending order. High R<sup>2</sup> and low AIC show that a predictor is accurate.
+
+Visualise the results in a bar plot:
+
+
+
+```{r warning=FALSE, message=FALSE}
+#bar plot R^2 of the predictors
+bp_bivar <- ggplot(data = bivar_results_sorted, aes(x = predictor, y = R2)) +
+  geom_bar(stat = "identity", fill = "darkgreen") +
+  coord_flip() +
+  labs(title = "Bivariate linear model: R^2 of single predictor variable")
+
+
+bp_bivar
+
+
+```
+
+
+**Discussion of the Results:**
+
+PPFD_IN has the strongest correlation with GPP_NT_VUT_REF. In other words, gross primary production depends the most on the density of incoming photosynthetic photon fluxes.
+SW_IN_F and SW_IN_F_MDS have a fairly strong influence too. Both of these variables stand for incoming shortwave radiation.
+Next is air temperature, represented by the variables TA_F and TA_F_MDS, with an R<sup>2</sup> of 0.277.
+Vapor pressure deficit (VPD) and incoming longwave radiation (LW_IN) have a smaller effect on GPP.
+The fraction of CO2 is even less important.
+Precipitation (P_F) and air pressure (PA_F) have almost no correlation.
+
+
+
+## Multivariate models
+
+
+```{r warning=FALSE}
+
+
+#select the model with the highest R2 and take its AIC
+highest_r2_1pred <- bivar_results_sorted |> slice(1)
+aic_1pred <- highest_r2_1pred[3]
+
+
+
+#remove the predictor used before from the vector of predictor names so that it is not used again
+predictor_vars_multivar <- predictor_vars[predictor_vars != highest_r2_1pred$predictor]
+
+
+
+
+#increase the number of predictors now
+#do this by defining a vector to which we will add the most accurate predictor for every iteration
+chosen_predictors <- c(highest_r2_1pred[1])
+
+
+#create data frame to store all multivariate models of one iteration
+multivariate_results <- data.frame(predictor = character(), R2_adj = numeric(), AIC = numeric())
+
+
+
+#create tibble to store the best model of every iteration
+best_model_p_predictors <- tibble(p = numeric(), predictors = vector(), AIC = numeric())
+
+
+
+aic_p_minus_1 <- Inf            #set aic of model with zero predictors to Inf to guarantee that 
+                                #the aic_p will be smaller and the while condition will be true
+
+aic_p <- aic_1pred              #define aic of model with p predictors
+
+
+#set up while loop that runs as long as the aic of the best model with p predictors
+# is better (smaller) than the aic of the best model with p-1 predictors
+
+while(aic_p < aic_p_minus_1) {
+
+  
+  
+#iterate over remaining predictor variables and use them together with
+# chosen predictors to fit multivariate model
+
+
+  for (pred_var in predictor_vars_multivar) {
+  
+     multivariate_lm <- lm(as.formula(paste("GPP_NT_VUT_REF ~ ",
+      paste(c(chosen_predictors, pred_var), collapse = " + "))), data = clean_fluxes)
+  
+  
+     multivariate_R2_adj <- (summary(multivariate_lm)$adj.r.squared)  #calculate adjusted R^2 
+     multivariate_AIC <- extractAIC(multivariate_lm)[2]      #calculate AIC of the model
+  
+  
+     #add row with predictor name, R2 and AIC to the multivariate results dataframe
+     multivariate_results <- rbind(multivariate_results, 
+                                   data.frame(predictor = pred_var,
+                                              R2_adj = multivariate_R2_adj,
+                                              AIC = multivariate_AIC))
+  
+}
+
+
+
+
+  #sort results, highest R2 first
+  multivariate_results_sorted <- multivariate_results |> dplyr::arrange(desc(R2_adj))
+  multivariate_results_sorted
+
+
+  #select the multivariate model with the highest R2
+  multivar_model_highest_r2 <- multivariate_results_sorted |> slice(1)
+  
+  
+  
+  
+  #name of the best predictor
+  best_predictor <- as.character(multivar_model_highest_r2$predictor[1])
+  
+  
+  
+  #update the two AIC variables that are to be compared
+  aic_p_minus_1 <- aic_p
+  aic_p <- multivar_model_highest_r2[3]
+  
+
+  
+  #remove the best predictor from the vector of predictors not yet used
+  predictor_vars_multivar <- predictor_vars_multivar[predictor_vars_multivar != best_predictor]
+  
+  
+  
+  #add the best predictor to the list of predictors used
+  chosen_predictors <- append(chosen_predictors, best_predictor)
+
+  
+  #add best model to the tibble
+  best_model_p_predictors <- rbind(best_model_p_predictors, tibble(p = length(chosen_predictors), predictors = paste(chosen_predictors, collapse = " + "), AIC = aic_p))
+  
+  #reconstruct the best model
+  best_model <-  lm(as.formula(paste("GPP_NT_VUT_REF ~ ",
+      paste(chosen_predictors, collapse = " + "))), data = clean_fluxes)
+
+    
+    
+   #print out the formula of the current best model
+  print(paste("Best Model of this iteration: ", format(formula(best_model))))
+  print(paste("Number of predictors: ", length(chosen_predictors)))
+  print(paste("AIC: ", aic_p))
+  
+  
+    
+  #reset the results table so it will be empty when the next for loops starts
+  multivariate_results <- data.frame(predictor = character(), R2_adj = numeric(), AIC = numeric())
+
+}
+
+```
+
+Notice that the AIC of the last model is poorer than the AIC of the previous one, which uses ten predictors. The last one is still printed out, this is due to the condition of the while loop, which breaks only now that the current model's AIC (11 predictors) is poorer than the previous model's AIC.
+
+
+
+
+
+
+
+
+
+```{r}
+knitr::kable(best_model_p_predictors)
+```
+
+The regression model with 10 predictors has the lowest AIC.
+
+To see how the AIC developed with increasing number of predictors, look at the following plot:
+
+```{r}
+plot_stepwise_aic <- ggplot(data = best_model_p_predictors, aes(x = p, y = AIC$AIC)) +
+  geom_point() +
+  geom_line() +
+  labs(title = "AIC with increasing number of predictors") +
+  theme_classic()
+
+plot_stepwise_aic + scale_x_continuous(breaks = seq(1:11))
+
+```
+
+
+**Discussion of stepwise forward regression**
+
+There is a significant drop in the AIC when increasing the number of predictors from 2 to 3.
+What is interesting is that LW_IN_F_MDS is not chosen, even though it has a fairly large impact on GPP (see bar plot above). This might be because LW_IN_F_MDS is essentially the same as LW_IN_F and does therefore not contribute a lot to model improvement.
+
+
+
+

@@ -1,0 +1,13 @@
+---
+title: "re_paircoding"
+author: "Valentin Lanz"
+date: "2025-05-19"
+output: html_document
+---
+
+Here are the links to the repositories used in the paircoding exercise of Chapter 8.
+
+https://github.com/esther-guancho/repos_chapter_8
+
+https://github.com/esther-guancho/re_chapter_8_dave_forked
+

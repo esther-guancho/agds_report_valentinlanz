@@ -1,0 +1,89 @@
+---
+title: "re_tidy"
+output: html_document
+author: "Valentin Lanz"
+date: "2025-03-03"
+---
+
+```{r message=FALSE, warning=FALSE}
+
+#load tidyverse library
+library(tidyverse)
+
+
+#load the data
+carbon_soil <- readr::read_delim("../data/agds_chapter4_data_soil_carbon.csv", delim = ";")
+carbon_soil <- carbon_soil[1:234, 1:11]  #remove empty rows and columns
+
+
+
+#create a data frame for each of the three phases
+early_phase <- carbon_soil |> dplyr::filter(experiment_duration < 3)
+mid_phase <- carbon_soil |> dplyr::filter ((experiment_duration >= 3) & (experiment_duration < 6))
+late_phase <- carbon_soil |> dplyr::filter(experiment_duration > 6)
+
+
+
+#define a function that calculates the log_response ratio
+log_response <- function(x_elevated, x_ambient) {
+  return(log(x_elevated/x_ambient))
+}
+
+
+
+#calculate log-response ratio for each phase
+rr_early <- log_response(early_phase[,7], early_phase[,6])
+mean_early <- mean(rr_early[,1])
+
+rr_mid <- log_response(mid_phase[,7], mid_phase[,6])
+mean_mid <- mean(rr_mid[,1])
+
+
+rr_mid <- log_response(late_phase[,7], late_phase[,6])
+mean_late <- mean(rr_mid[,1])
+
+
+
+
+#create a data frame with the results
+df_mean_rr <- data.frame(
+  rr_early_phase = mean_early,
+  rr_mid_phase = mean_mid,
+  rr_late_phase = mean_late
+  
+)
+
+
+```
+## Results
+
+```{r message=FALSE, warning=FALSE}
+#display restults in a table
+knitr::kable(df_mean_rr)
+
+
+
+```
+
+
+## Discussion 
+**What are the data that you are looking at?**
+
+The data shows the mean measured soil carbon values of different experiments at different locations and times. In each experiment, the soil carbon values were measured in an ecosystem with artificially elevated CO2-concentration as well as in the ambient ecosystem.
+
+
+**What do you expect your analysis to show, what is your hypothesis? How should soil organic matter content change under elevated CO2?**
+
+
+Since plants use CO2 for photosynthesis, i expect that in an ecosystem with higher concentration of CO2, there is more biological activity and, consequently, a higher amount of soil organic matter.
+My hypothesis is that there is a positive correlation between CO2 concentration and soil organic matter.
+
+
+**Interpret your results after aggregating the data: What do your final numbers mean? Do they support your initial hypothesis? Why so, why not?**
+
+The final numbers are the logarithmic ratio of SOC found in CO2-elevated ecosystems and SOC in natural ambient ecosystems. If the value is positive (as in the early and mid-phase), it means that there is more soil organic matter content in the ecosystem with elevated CO2 concentration. This supports the hypothesis formulated above. In the late phase, however, the log-response ratio is below zero, which indicates a negative correlation between CO2 concentration and soil organic matter content. This is contradictory to the hypothesis.
+
+
+
+
+

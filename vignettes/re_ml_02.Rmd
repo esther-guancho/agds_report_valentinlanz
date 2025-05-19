@@ -1,0 +1,337 @@
+---
+title: "re_ml_02"
+author: "Valentin Lanz"
+output: html_document
+date: "2025-05-12"
+---
+
+The goal of this exercise is to see how models perform on data from different observation sites. I am going to fit three models:
+
+- a model trained with data from Davos
+- a model trained with data from Laegern
+- a model trained with combined Data
+
+Then each model will be evaluated on the three different test sets.
+
+
+**Information on Davos data**
+
+- Elevation: 1639 m. ü. M
+- Vegetation IGBP: 	ENF (Evergreen Needleleaf Forests: Lands dominated by woody vegetation with a percent cover >60% and height exceeding 2 meters. Almost all trees remain green all year. Canopy is never without green foliage.)
+- Mean Annual Temp (°C): 	2.8
+- Mean Annual Precip. (mm): 	1062
+- west-facing
+
+
+
+**Information on Laegern data**
+
+- Elevation: 689 m.ü.M
+- Vegetation IGBP: 	MF (Mixed Forests: Lands dominated by trees with a percent cover >60% and height exceeding 2 meters. Consists of tree communities with interspersed mixtures or mosaics of the other four forest types. None of the forest types exceeds 60% of landscape.)
+- Mean Annual Temp (°C): 	8.3
+- Mean Annual Precip. (mm): 	1100
+- south-facing
+
+
+
+
+## Code
+
+```{r warning=FALSE, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(tidyr)
+library(caret)
+library(recipes)
+
+#set seed
+set.seed(123)
+
+#load functions
+source("../R/agds11_functions.R")
+
+
+flux_dav <- readr::read_csv("../data/FLX_CH-Dav_FLUXNET2015_FULLSET_DD_1997-2014_1-3.csv")
+flux_lae <- readr::read_csv("../data/FLX_CH-Lae_FLUXNET2015_FULLSET_DD_2004-2014_1-4.csv")
+
+
+
+
+#wrangle data as in chapter 10, start with Davos
+#then fit knn model for Davos
+#----Davos----
+
+flux_dav <- flux_dav |>  
+  
+  # select only the variables we are interested in
+  dplyr::select(TIMESTAMP,
+                GPP_NT_VUT_REF,    # the target
+                ends_with("_QC"),  # quality control info
+                ends_with("_F"),   # includes all all meteorological covariates
+                -contains("JSB")   # weird useless variable
+  ) |>
+  
+  # convert to a nice date object
+  dplyr::mutate(TIMESTAMP = lubridate::ymd(TIMESTAMP)) |>
+  
+  # set all -9999 to NA
+  mutate(across(where(is.numeric), ~na_if(., -9999))) |> 
+  
+  # retain only data based on >=80% good-quality measurements
+  # overwrite bad data with NA (not dropping rows)
+  dplyr::mutate(GPP_NT_VUT_REF = ifelse(NEE_VUT_REF_QC < 0.8, NA, GPP_NT_VUT_REF),
+                TA_F           = ifelse(TA_F_QC        < 0.8, NA, TA_F),
+                SW_IN_F        = ifelse(SW_IN_F_QC     < 0.8, NA, SW_IN_F),
+                LW_IN_F        = ifelse(LW_IN_F_QC     < 0.8, NA, LW_IN_F),
+                VPD_F          = ifelse(VPD_F_QC       < 0.8, NA, VPD_F),
+                PA_F           = ifelse(PA_F_QC        < 0.8, NA, PA_F),
+                P_F            = ifelse(P_F_QC         < 0.8, NA, P_F),
+                WS_F           = ifelse(WS_F_QC        < 0.8, NA, WS_F)) |> 
+  
+  # drop QC variables (no longer needed)
+  dplyr::select(-ends_with("_QC")) |>
+  dplyr::select(-P_F)
+
+
+
+
+#split data, use 80% for training
+split <- rsample::initial_split(flux_dav, prop = 0.8, strata = "VPD_F")
+flux_dav_train <- rsample::training(split)
+flux_dav_test <- rsample::testing(split)
+
+
+
+# scale and center data, Yeo-Johnson transform
+pp_dav <- recipes::recipe(GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F, 
+                      data = flux_dav_train |> drop_na()) |> 
+  recipes::step_YeoJohnson(recipes::all_predictors()) |> 
+  recipes::step_center(recipes::all_numeric(), -recipes::all_outcomes()) |>
+  recipes::step_scale(recipes::all_numeric(), -recipes::all_outcomes())
+
+
+
+# Fit KNN model
+knn_dav <- caret::train(
+  pp_dav, 
+  data = flux_dav_train |> drop_na(), 
+  method = "knn",
+  trControl = caret::trainControl(method = "none"),
+  tuneGrid = data.frame(k = 8),
+  metric = "RMSE"
+)
+
+
+
+
+
+
+
+#----Laegern----
+
+flux_lae <- flux_lae |>  
+  
+  # select only the variables we are interested in
+  dplyr::select(TIMESTAMP,
+                GPP_NT_VUT_REF,    # the target
+                ends_with("_QC"),  # quality control info
+                ends_with("_F"),   # includes all all meteorological covariates
+                -contains("JSB")   # weird useless variable
+  ) |>
+  
+  # convert to a nice date object
+  dplyr::mutate(TIMESTAMP = lubridate::ymd(TIMESTAMP)) |>
+  
+  # set all -9999 to NA
+  mutate(across(where(is.numeric), ~na_if(., -9999))) |> 
+  
+  # retain only data based on >=80% good-quality measurements
+  # overwrite bad data with NA (not dropping rows)
+  dplyr::mutate(GPP_NT_VUT_REF = ifelse(NEE_VUT_REF_QC < 0.8, NA, GPP_NT_VUT_REF),
+                TA_F           = ifelse(TA_F_QC        < 0.8, NA, TA_F),
+                SW_IN_F        = ifelse(SW_IN_F_QC     < 0.8, NA, SW_IN_F),
+                LW_IN_F        = ifelse(LW_IN_F_QC     < 0.8, NA, LW_IN_F),
+                VPD_F          = ifelse(VPD_F_QC       < 0.8, NA, VPD_F),
+                PA_F           = ifelse(PA_F_QC        < 0.8, NA, PA_F),
+                P_F            = ifelse(P_F_QC         < 0.8, NA, P_F),
+                WS_F           = ifelse(WS_F_QC        < 0.8, NA, WS_F)) |> 
+  
+  # drop QC variables (no longer needed)
+  dplyr::select(-ends_with("_QC")) |>
+  dplyr::select(-P_F) #remove P_F since it's always NA
+
+
+
+#split data, use 80% for training
+split <- rsample::initial_split(flux_lae, prop = 0.8, strata = "VPD_F")
+flux_lae_train <- rsample::training(split)
+flux_lae_test <- rsample::testing(split)
+
+
+
+# scale and center data, Yeo-Johnson transform
+pp_lae <- recipes::recipe(GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F, 
+                      data = flux_lae_train |> drop_na()) |> 
+  recipes::step_YeoJohnson(recipes::all_predictors()) |> 
+  recipes::step_center(recipes::all_numeric(), -recipes::all_outcomes()) |>
+  recipes::step_scale(recipes::all_numeric(), -recipes::all_outcomes())
+
+
+
+# Fit KNN model for Laegern
+knn_lae <- caret::train(
+  pp_lae, 
+  data = flux_lae_train |> drop_na(), 
+  method = "knn",
+  trControl = caret::trainControl(method = "none"),
+  tuneGrid = data.frame(k = 8),
+  metric = "RMSE"
+)
+
+
+
+
+
+#----Combined----
+
+#combine data frames with rbind
+flux_combined <- rbind(flux_dav, flux_lae)
+
+
+
+#split data, use 80% for training
+split_comb <- rsample::initial_split(flux_combined, prop = 0.8, strata = "VPD_F")
+combined_train <- rsample::training(split_comb)
+combined_test <- rsample::testing(split_comb)
+
+combined_train <- rbind(flux_dav_train, flux_lae_train)
+combined_test <- rbind(flux_dav_test, flux_lae_test)
+
+
+
+# scale and center data, Yeo-Johnson transform
+pp_combined <- recipes::recipe(GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F, 
+                      data = combined_train |> drop_na()) |> 
+  recipes::step_YeoJohnson(recipes::all_predictors()) |> 
+  recipes::step_center(recipes::all_numeric(), -recipes::all_outcomes()) |>
+  recipes::step_scale(recipes::all_numeric(), -recipes::all_outcomes())
+
+
+
+
+# Fit KNN model with combined data set
+knn_combined <- caret::train(
+  pp_combined, 
+  data = combined_train |> drop_na(), 
+  method = "knn",
+  trControl = caret::trainControl(method = "none"),
+  tuneGrid = data.frame(k = 8),
+  metric = "RMSE"
+)
+
+
+
+#evaluate Davos-trained model
+
+
+#see how it performs on Davos test set
+dav_dav <- eval_knn(knn_dav, flux_dav_test, flux_dav_train)
+
+
+#see how it performs on Laegern test set
+dav_lae <- eval_knn(knn_dav, flux_lae_test, flux_dav_train)
+
+
+#see how it performs on combined test set
+dav_comb <- eval_knn(knn_dav, combined_test, flux_dav_train)
+
+
+dav_results <- bind_rows("Evaluation against Davos test set: " = dav_dav$metrics,
+                         "Evaluation against Laegern test set: " = dav_lae$metrics,
+                         "Evaluation against combined test set: " = dav_comb$metrics,
+                         .id = "Model trained on data from Davos")
+
+dav_results <- dav_results |> select(starts_with("Model"), Rsq_test, Rmse_test)
+
+
+
+
+#evaluate Laegern-trained model
+#see how it performs on Davos test set
+lae_dav <- eval_knn(knn_lae, flux_dav_test, flux_lae_train)
+
+
+#see how it performs on Laegern test set
+lae_lae <- eval_knn(knn_lae, flux_lae_test, flux_lae_train)
+
+
+#see how it performs on combined test set
+lae_comb <- eval_knn(knn_lae, combined_test, flux_lae_train)
+
+
+lae_results <- bind_rows("Evaluation against Davos test set: " = lae_dav$metrics,
+                         "Evaluation against Laegern test set: " = lae_lae$metrics,
+                         "Evaluation against combined test set: " = lae_comb$metrics,
+                         .id = "Model trained on data from Laegern")
+
+lae_results <- lae_results |> select(starts_with("Model"), Rsq_test, Rmse_test)
+
+
+
+
+
+#evaluate combined data model
+#see how it performs on Davos test set
+comb_dav <- eval_knn(knn_combined, flux_dav_test, combined_train)
+
+
+#see how it performs on Laegern test set
+comb_lae <- eval_knn(knn_combined, flux_lae_test, combined_train)
+
+
+#see how it performs on combined test set
+comb_comb <- eval_knn(knn_combined, combined_test, combined_train)
+
+
+comb_results <- bind_rows("Evaluation against Davos test set: " = comb_dav$metrics,
+                         "Evaluation against Laegern test set: " = comb_lae$metrics,
+                         "Evaluation against combined test set: " = comb_comb$metrics,
+                         .id = "Model trained on combined data from Davos and Laegern")
+
+# remove all metric cols except R2 and Rmse
+comb_results <- comb_results |> select(starts_with("Model"), Rsq_test, Rmse_test)
+```
+
+## Results
+
+```{r}
+#display all results
+knitr::kable(dav_results)
+knitr::kable(lae_results)
+knitr::kable(comb_results)
+
+```
+
+## Discussion
+
+
+**Patterns**
+
+- Each model performs best on the site which was used to train it.
+
+
+**How well do models trained on one site perform on another site? Why is this the case?**
+
+- Models perform worse on other sites. This is due to differences in data which stems from geographical differences of the observation sites. Laegern is located at significantly lower altitude and has different vegetation. The combined model is a bit better.
+
+**How does the model trained on both sites perform on the three test sets? Why is this the case?**
+
+- The model trained with combined data performs well for Davos. However, it is a bit less accurate than the model trained with data from Davos exclusively. The same is true for Laegern.
+
+The combined model performs best on the combined data test set, but it is less accurate than the Davos model on the Davos test set and the Laegern model on the Laegern test set.
+
+
+**When training and testing on both sites, is this a true ‘out-of-sample’ setup? What would you expect if your model was tested against data from a site in Spain?**
+
+- No, it is not a a true out-of-sample test since it is not tested on data from a completely new site. If it was tested on data from Spain, I would expect the R^2 to drop.

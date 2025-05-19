@@ -1,0 +1,271 @@
+---
+title: "re_ml01"
+author: "Valentin Lanz"
+output: 
+  html_document: 
+    toc: true
+date: "2025-04-28"
+---
+
+In this exercise, I am going to look at the differences between linear regression models and KNN supervised machine learning models.
+
+
+```{r message=FALSE, warning=FALSE}
+#load libraries
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(tidyr)
+library(caret)
+library(recipes)
+
+#load functions
+source("../R/agds10_functions.R")
+
+
+
+#load data
+url_fluxes <- "https://raw.githubusercontent.com/geco-bern/agds_book/refs/heads/main/book/data/FLX_CH-Dav_FLUXNET2015_FULLSET_DD_1997-2014_1-3.csv"
+
+daily_fluxes <- read.table(
+  url_fluxes,
+  header = TRUE,
+  sep = ","
+)
+
+
+daily_fluxes <- daily_fluxes |>  
+  
+  # select only the variables we are interested in
+  dplyr::select(TIMESTAMP,
+                GPP_NT_VUT_REF,    # the target
+                ends_with("_QC"),  # quality control info
+                ends_with("_F"),   # includes all all meteorological covariates
+                -contains("JSB")   # weird useless variable
+  ) |>
+  
+  # convert to a nice date object
+  dplyr::mutate(TIMESTAMP = lubridate::ymd(TIMESTAMP)) |>
+  
+  # set all -9999 to NA
+  mutate(across(where(is.numeric), ~na_if(., -9999))) |> 
+  
+  # retain only data based on >=80% good-quality measurements
+  # overwrite bad data with NA (not dropping rows)
+  dplyr::mutate(GPP_NT_VUT_REF = ifelse(NEE_VUT_REF_QC < 0.8, NA, GPP_NT_VUT_REF),
+                TA_F           = ifelse(TA_F_QC        < 0.8, NA, TA_F),
+                SW_IN_F        = ifelse(SW_IN_F_QC     < 0.8, NA, SW_IN_F),
+                LW_IN_F        = ifelse(LW_IN_F_QC     < 0.8, NA, LW_IN_F),
+                VPD_F          = ifelse(VPD_F_QC       < 0.8, NA, VPD_F),
+                PA_F           = ifelse(PA_F_QC        < 0.8, NA, PA_F),
+                P_F            = ifelse(P_F_QC         < 0.8, NA, P_F),
+                WS_F           = ifelse(WS_F_QC        < 0.8, NA, WS_F)) |> 
+  
+  # drop QC variables (no longer needed)
+  dplyr::select(-ends_with("_QC"))
+
+
+
+
+
+#split data
+split <- rsample::initial_split(daily_fluxes, prop = 0.7, strata = "VPD_F")
+daily_fluxes_train <- rsample::training(split)
+daily_fluxes_test <- rsample::testing(split)
+
+
+
+
+# scale and center data, Yeo-Johnson transform
+pp <- recipes::recipe(GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F, 
+                      data = daily_fluxes_train |> drop_na()) |> 
+  recipes::step_YeoJohnson(recipes::all_predictors()) |> 
+  recipes::step_center(recipes::all_numeric(), -recipes::all_outcomes()) |>
+  recipes::step_scale(recipes::all_numeric(), -recipes::all_outcomes())
+
+
+
+
+# Fit linear regression model
+mod_lm <- caret::train(
+  pp, 
+  data = daily_fluxes_train |> drop_na(), 
+  method = "lm",
+  trControl = caret::trainControl(method = "none"),
+  metric = "RMSE"
+)
+
+# Fit KNN model
+mod_knn <- caret::train(
+  pp, 
+  data = daily_fluxes_train |> drop_na(), 
+  method = "knn",
+  trControl = caret::trainControl(method = "none"),
+  tuneGrid = data.frame(k = 8),
+  metric = "RMSE"
+)
+
+```
+
+
+
+
+
+## Comparison of linear model and KNN model
+
+```{r message=FALSE, warning=FALSE}
+#fit linear model
+lm_results <- eval_model(mod = mod_lm, df_train = daily_fluxes_train, df_test = daily_fluxes_test)
+
+
+#show scatter plot of training and test data 
+lm_results$plots
+
+```
+Linear Model Evaluation
+
+
+
+```{r warning=FALSE, message=FALSE}
+# fit KNN model
+knn_results_8 <- eval_model(mod = mod_knn, df_train = daily_fluxes_train, df_test = daily_fluxes_test)
+
+
+#show scatter plot of training and test data 
+knn_results_8$plots
+
+
+```
+KNN Model Evaluation
+
+
+
+
+**Evaluation: KNN vs. linear model**
+
+As we see, there is a significant difference between the R<sup>2</sup> of the training set and the R<sup>2</sup> of the test set. This might be due to overfitting of the model. It makes sense that the model is more accurate for the data with which it was trained and not as accurate when tested with an unknown data set.
+
+This difference is smaller in the linear model. This is because the linear model uses a global approach and is less vulnerable to overfitting. The linear model does not as much depend on the specific distribution of the training data as the KNN model. Instead, the linear model uses "all training data at once" for training. It generalizes better.
+
+But, compared to the linear model, the KNN still has higher overall R<sup>2</sup> values. I suppose this is due to non-linear dependencies in the data set. The linear model fails to model these, while the KNN is more flexible.
+
+
+The linear model has a stronger bias and less variance because it uses all observations at once when trained.
+
+The KNN model has a higher variance than the linear model, but the KNN's variance depends on the value that k takes. With increasing number of neighbors (k), the bias increases and the variance gets lower. In the extreme case of k being equal to n (number of observations), the model has maximum bias and no variation at all (all observations are used as neighbors).
+
+
+```{r warning = FALSE, message = FALSE}
+
+#plot knn-modelled GPP (k=8) and compare to observed values
+compare_plot_knn <- ggplot(data = knn_results_8$predict_test) +
+  geom_line(aes(x = TIMESTAMP, y = GPP_NT_VUT_REF)) +
+  geom_line(aes(x = TIMESTAMP, y = fitted), color = "red") +
+  labs(title = "Observed GPP (black) and KNN-predicted values (red)")
+
+
+
+#plot linear model predicted GPP and compare to observed values
+compare_plot_lm <- ggplot(data = lm_results$predict_test) +
+  geom_line(aes(x = TIMESTAMP, y = GPP_NT_VUT_REF)) +
+  geom_line(aes(x = TIMESTAMP, y = fitted), color = "red") +
+  labs(title = "Observed GPP (black) and linear-model-predicted values (red)")
+
+
+#combine plots
+cowplot::plot_grid(compare_plot_knn, compare_plot_lm, nrow = 2)
+```
+
+
+
+
+## The role of k
+
+My hypothesis is that for k approaching 1, on the training set the R<sup>2</sup> will be near 1 and the MAE near 0. On the test set the R<sup>2</sup> will be very low due to overfitting and the MAE will be accordingly high.
+
+For k approaching n, on the training set I expect the R<sup>2</sup> to be quite bad (underfitting) and the MAE will probably be bad too. On the test set there will be a better R<sup>2</sup> than the k = 1 model, but not a solid one because of underfitting.
+
+
+```{r warning=FALSE, message=FALSE}
+
+
+knn_results <- data.frame(k = 8, knn_results_8$metrics)
+
+
+
+#set up a for loop to increase k and analyse the relevant metrics
+
+for (k1 in c((1:40), (150:170), (280:300))) {
+
+  
+  #fit knn model with k1 neighbours
+  mod_k1nn <- caret::train(
+  pp, 
+  data = daily_fluxes_train |> drop_na(), 
+  method = "knn",
+  trControl = caret::trainControl(method = "none"),
+  tuneGrid = data.frame(k = k1),
+  metric = "RMSE"
+  )
+  
+  #extract metrics
+  k1_results <- eval_model(mod_k1nn, df_train = daily_fluxes_train, df_test = daily_fluxes_test)
+  
+  
+  #add column to keep track of k
+  df_k1_results <- data.frame(k = k1, k1_results$metrics) 
+  knn_results <- rbind(knn_results, df_k1_results)
+  
+}
+
+```
+
+
+
+
+
+
+
+```{r warning = FALSE, message = FALSE}
+
+#plot mae_train and mae_test against k
+
+k_plot <- ggplot(data = knn_results) +
+  geom_line(aes(x = k, y = Mae_train)) +
+  geom_point(aes(x = k, y = Mae_train)) +
+  geom_line(aes(x = k, y = Mae_test), color = "red") +
+  geom_point(aes(x = k, y = Mae_test), color = "red") +
+  labs(title = "Mae_train (black) and Mae_test (red) for increasing values of k",
+       y = "MAE")
+
+
+
+
+k_plot
+
+
+```
+
+For low values of k, the mean absolute error is very low on the training set because the model precisely fits the training data and has low bias. On the test set, however, the MAE is high because of the overfitting mentioned before.
+
+As k increases, the model gets more general (more bias, less variance). On the right side of the plot we see that MAE is quite high on both the test and training set. This is due to underfitting. The model is too simple.
+
+The optimal region lies at approximately k = 40, where the MAE on the test data is minimal.
+
+
+
+```{r warning = FALSE, message = FALSE}
+#find optimal k, where MAE is minimal
+
+sorted_mae <- knn_results |> dplyr::arrange(Mae_test)
+
+
+#select ks with lowest mae_test
+lowest_10_mae <- sorted_mae[1:10, 1:2]
+
+knitr::kable(lowest_10_mae, align = "c")
+
+```
+The region of optimal generalisability is found below k = 40. Sometimes, depending on the data split, it is even below k = 30. 
+
+
